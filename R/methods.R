@@ -909,16 +909,7 @@ predict.MixMod <- function (object, newdata, newdata2 = NULL,
         type_pred <- "response"
     }
     if (missing(newdata)) {
-        newdata <- object$model_frames$mfX
-        combine <- function (mf, newdata) {
-            mf <- object$model_frames$mfX_zi
-            cond <- length(mf) >= 1 && any(ind <- !names(mf) %in% names(newdata))
-            if (cond) cbind(newdata, mf[ind]) else newdata
-        }
-        newdata <- combine(object$model_frames$mfZ, newdata)
-        newdata <- combine(object$model_frames$mfX_zi, newdata)
-        newdata <- combine(object$model_frames$mfZ_zi, newdata)
-        newdata[[object$id_name]] <- object[["id"]]
+        newdata <- object$data
     }
     termsX <- delete.response(object$Terms$termsX)
     mfX <- model.frame(termsX, newdata, 
