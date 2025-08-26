@@ -1,8 +1,7 @@
-mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family, 
-                       initial_values, Funs, control, penalized, weights) {
+mixed_fit <- function (y, X, Z, id, offset, family, 
+                       initial_values, Funs, control, weights) {
     # Create lists of y, X, and Z per id
     y <- unattr(y); X <- unattr(X); Z <- unattr(Z); offset <- unattr(offset)
-    X_zi <- unattr(X_zi); Z_zi <- unattr(Z_zi); offset_zi <- unattr(offset_zi)
     id_unq <- unique(id)
     y_lis <- if (NCOL(y) == 2) lapply(id_unq, function (i) y[id == i, , drop = FALSE]) else split(y, id)
     fams_N <- family$family %in% c("binomial", "beta binomial")
@@ -20,16 +19,12 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
         drop(if (NCOL(y) == 2) crossprod(X, y[, 1] * weights[id]) 
              else crossprod(X, y * weights[id]))
     }
-    X_zi_lis <- lapply(id_unq, function (i) X_zi[id == i, , drop = FALSE])
-    Z_zi_lis <- lapply(id_unq, function (i) Z_zi[id == i, , drop = FALSE])
-    offset_zi_lis <- if (!is.null(offset_zi)) split(offset_zi, id)
     # Functions
     log_dens <- Funs$log_dens
     mu_fun <- Funs$mu_fun
     var_fun <- Funs$var_fun
     mu.eta_fun <- Funs$mu.eta_fun
     score_eta_fun <- Funs$score_eta_fun
-    score_eta_zi_fun <- Funs$score_eta_zi_fun
     score_phis_fun <- Funs$score_phis_fun
     canonical <- !is.null(family$family) &&
         ((family$family == "binomial" && family$link == "logit") ||
@@ -42,9 +37,7 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
     n <- length(id_unq)
     ncx <- ncol(X)
     ncz <- ncol(Z)
-    ncx_zi <- ncol(X_zi)
-    ncz_zi <- ncol(Z_zi)
-    nRE <- if (!is.null(Z_zi)) ncz + ncz_zi else ncz
+    nRE <- ncz
     nAGQ <- control$nAGQ
     nAGQ_cartesian <- nAGQ^nRE
     ind_Z <- seq_len(ncol(Z))
@@ -56,17 +49,10 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
         D <- diag(D, nRE)
     }
     phis <- unname(initial_values[["phis"]])
-    gammas <- unname(initial_values[["gammas"]])
     has_phis <- !is.null(phis)
     nparams <- length(betas) + length(if (diag_D) diag(D) else D[lower.tri(D, TRUE)]) + 
-        length(phis) + length(gammas)
+        length(phis)
     post_modes <- matrix(0.0, n, nRE)
-    # penalized components
-    pen_mu <- if (penalized$penalized) rep(penalized$pen_mu, length.out = ncx)
-    pen_invSigma <- if (penalized$penalized) 
-        diag(rep(1 / penalized$pen_sigma^2, length.out = ncx), ncx)
-    pen_df <- if (penalized$penalized) penalized$pen_df
-    penalized <- penalized$penalized
     # set up EM algorithm
     iter_EM <- control$iter_EM
     update_GH <- seq(0, iter_EM, control$update_GH_every)
@@ -86,14 +72,13 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
                              "adjust the 'max_phis_value' control argument.")
     if (iter_EM > 0) {
         Params <- matrix(0.0, iter_EM, nparams)
-        GH <- GHfun(post_modes, y_lis, N_lis, X_lis, Z_lis, offset_lis, X_zi_lis, Z_zi_lis, 
-                    offset_zi_lis, betas, solve(D), phis, gammas,
+        GH <- GHfun(post_modes, y_lis, N_lis, X_lis, Z_lis, offset_lis,
+                    betas, solve(D), phis,
                     nAGQ, nRE, canonical, user_defined, Zty_lis, log_dens, mu_fun, var_fun,
-                    mu.eta_fun, score_eta_fun, score_phis_fun, score_eta_zi_fun)
+                    mu.eta_fun, score_eta_fun, score_phis_fun)
         b <- GH$b
         b2 <- GH$b2
         Ztb <- GH$Ztb
-        Z_zitb <- GH$Z_zitb
         wGH <- GH$wGH
         log_wGH <- rep(log(wGH), each = n)
         log_dets <- GH$log_dets
@@ -102,34 +87,25 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
         for (it in seq_len(iter_EM)) {
             if (it %in% update_GH) {
                 # calculate adaptive GH points and weights
-                GH <- GHfun(post_modes, y_lis, N_lis, X_lis, Z_lis, offset_lis, X_zi_lis, 
-                            Z_zi_lis, offset_zi_lis, betas, solve(D), phis, gammas,
+                GH <- GHfun(post_modes, y_lis, N_lis, X_lis, Z_lis, offset_lis, betas, solve(D), phis,
                             nAGQ, nRE, canonical, user_defined, Zty_lis, log_dens, mu_fun, 
-                            var_fun, mu.eta_fun, score_eta_fun, score_phis_fun, 
-                            score_eta_zi_fun)
+                            var_fun, mu.eta_fun, score_eta_fun, score_phis_fun)
                 b <- GH$b
                 b2 <- GH$b2
                 Ztb <- GH$Ztb
-                Z_zitb <- GH$Z_zitb
                 wGH <- GH$wGH
                 log_wGH <- rep(log(wGH), each = n)
                 log_dets <- GH$log_dets
                 post_modes <- GH$post_modes
             }
             # save parameters
-            Params[it, ] <- c(betas, if (diag_D) diag(D) else D[lower.tri(D, TRUE)], phis,
-                              gammas)
+            Params[it, ] <- c(betas, if (diag_D) diag(D) else D[lower.tri(D, TRUE)], phis)
             ##
             # calculate posterior distribution of the random effects
             eta_y <- as.vector(X %*% betas) + Ztb
             if (!is.null(offset))
                 eta_y <- eta_y + offset
-            eta_zi <- if (!is.null(X_zi)) as.vector(X_zi %*% gammas)
-            if (!is.null(Z_zi))
-                eta_zi <- eta_zi + Z_zitb
-            if (!is.null(offset_zi))
-                eta_zi <- eta_zi + offset_zi
-            log_p_yb <- unname(rowsum(log_dens(y, eta_y, mu_fun, phis, eta_zi), 
+            log_p_yb <- unname(rowsum(log_dens(y, eta_y, mu_fun, phis), 
                                       id, reorder = FALSE))
             log_p_b <- matrix(dmvnorm(b, rep(0, nRE), D, TRUE), n, nAGQ^nRE, byrow = TRUE)
             #p_yb <- exp(log_p_yb + log_p_b)
@@ -153,10 +129,6 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
             # calculate log-likelihood
             log_p_y <- if (is.null(weights)) log_p_y + log_dets else weights * (log_p_y + log_dets)
             lgLik[it] <- sum(log_p_y[is.finite(log_p_y)], na.rm = TRUE)
-            if (penalized) {
-                lgLik[it] <- lgLik[it] + dmvt(betas, mu = pen_mu, invSigma = pen_invSigma,
-                                              df = pen_df)
-            }
             # check convergence
             if (it > 4 && lgLik[it] > lgLik[it - 1]) {
                 thets1 <- Params[it - 1, ]
@@ -178,8 +150,6 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
                 cat("betas:", round(betas, 4), "\n")
                 if (has_phis)
                     cat("phis:", round(phis, 4), "\n")
-                if (!is.null(gammas))
-                    cat("gammas:", round(gammas, 4), "\n")
                 cat("D:", round(if (diag_D) diag(D) else D[lower.tri(D, TRUE)], 4), "\n")
             }
             ############################
@@ -192,57 +162,37 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
             if (has_phis) {
                 Hphis <- numer_deriv_vec(phis, score_phis, y = y, X = X, betas = betas,
                                          Ztb = Ztb, offset = offset, weights = weights, 
-                                         eta_zi = eta_zi, id = id, p_by = p_by, 
+                                         id = id, p_by = p_by, 
                                          log_dens = log_dens, mu_fun = mu_fun, wGH = wGH,
                                          score_phis_fun = score_phis_fun)
                 Hphis <- nearPD(Hphis)
-                scphis <- score_phis(phis, y, X, betas, Ztb, offset, weights, eta_zi, id, 
+                scphis <- score_phis(phis, y, X, betas, Ztb, offset, weights, id, 
                                      p_by, log_dens, mu_fun, wGH, score_phis_fun)
                 phis <- phis - drop(solve(Hphis, scphis))
             }
             Hbetas <- numer_deriv_vec(betas, score_betas, y = y, N = N, X = X, id = id,
                                       offset = offset, weights = weights, phis = phis, 
-                                      Ztb = Ztb, eta_zi = eta_zi,
+                                      Ztb = Ztb,
                                       p_by = p_by, wGH = wGH, canonical = canonical,
                                       user_defined = user_defined, Xty = Xty, Xty_weights = Xty_weights,
                                       log_dens = log_dens, mu_fun = mu_fun, var_fun = var_fun,
                                       mu.eta_fun = mu.eta_fun,
                                       score_eta_fun = score_eta_fun,
-                                      score_phis_fun = score_phis_fun, 
-                                      penalized = penalized, pen_mu = pen_mu, 
-                                      pen_invSigma = pen_invSigma, pen_df = pen_df)
+                                      score_phis_fun = score_phis_fun)
             Hbetas <- nearPD(Hbetas)
-            scbetas <- score_betas(betas, y, N, X, id, offset, weights, phis, Ztb, eta_zi, 
+            scbetas <- score_betas(betas, y, N, X, id, offset, weights, phis, Ztb, 
                                    p_by, wGH, canonical, user_defined, Xty, Xty_weights, 
                                    log_dens, mu_fun, var_fun, mu.eta_fun, score_eta_fun, 
-                                   score_phis_fun, penalized, pen_mu, pen_invSigma, pen_df)
+                                   score_phis_fun)
             betas <- betas - drop(solve(Hbetas, scbetas))
-            if (!is.null(gammas)) {
-                Hgammas <- numer_deriv_vec(gammas, score_gammas, y, X, betas, Ztb, offset, 
-                                           weights, X_zi, Z_zi, Z_zitb, offset_zi, log_dens,
-                                           score_eta_zi_fun, phis, mu_fun, p_by, wGH, id)
-                Hgammas <- nearPD(Hgammas)
-                scgammas <- score_gammas(gammas, y, X, betas, Ztb, offset, weights, X_zi, 
-                                         Z_zi, Z_zitb, offset_zi, log_dens, score_eta_zi_fun, 
-                                         phis, mu_fun, p_by, wGH, id)
-                gammas <- gammas - drop(solve(Hgammas, scgammas))
-            }
-            if (any(abs(betas[-1L]) > control$max_coef_value) || 
-                (!is.null(gammas) && any(abs(gammas) > control$max_coef_value))) {
+            if (any(abs(betas[-1L]) > control$max_coef_value)) {
                 stop(err_mgs)
-            }
-            if (family$family %in% c("zero-inflated negative binomial", "negative binomial") &&
-                exp(phis) > control$max_phis_value) {
-                stop(large_shape_mgs)
             }
         }
     }
     list_thetas <- list(betas = betas, D = if (diag_D) log(diag(D)) else chol_transf(D))
     if (!is.null(phis)) {
         list_thetas <- c(list_thetas, list(phis = phis))
-    }
-    if (!is.null(gammas)) {
-        list_thetas <- c(list_thetas, list(gammas = gammas))
     }
     tht <- unlist(as.relistable(list_thetas))
     if (!converged && control$iter_qN_outer > 0) {
@@ -251,11 +201,11 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
             cat("\nStart quasi-Newton iterations...\n\n")
         }
         length_notNA <- function (x) length(x[!is.na(x)])
-        ns <- c("betas" = 0, "D" = 0, "phis" = 0, "gammas" = 0)
+        ns <- c("betas" = 0, "D" = 0, "phis" = 0)
         lng <- sapply(list_thetas, length)
         ns[names(lng)] <- lng
         parscale <- rep(c(control$parscale_betas, control$parscale_D,
-                          control$parscale_phis, control$parscale_gammas), ns)
+                          control$parscale_phis), ns)
        if (control$optimizer == "optimParallel") {
             cl <- parallel::makeCluster(2)
             parallel::setDefaultCluster(cl = cl)
@@ -264,34 +214,27 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
                                                    "dmvt", "dmvnorm"))
         }
         for (it in seq_len(control$iter_qN_outer)) {
-            GH <- GHfun(post_modes, y_lis, N_lis, X_lis, Z_lis, offset_lis, X_zi_lis, 
-                        Z_zi_lis, offset_zi_lis, betas, solve(D), phis, gammas, nAGQ, nRE, 
+            GH <- GHfun(post_modes, y_lis, N_lis, X_lis, Z_lis, offset_lis, 
+                        betas, solve(D), phis, nAGQ, nRE, 
                         canonical, user_defined, Zty_lis, log_dens, mu_fun, var_fun, 
-                        mu.eta_fun, score_eta_fun, score_phis_fun, score_eta_zi_fun)
+                        mu.eta_fun, score_eta_fun, score_phis_fun)
             opt <- optFun(tht, logLik_mixed, score_mixed, parscale = parscale,
                           control = control, id = id, y = y, N = N, X = X, Z = Z, 
-                          offset = offset, X_zi = X_zi, Z_zi = Z_zi, offset_zi = offset_zi, 
+                          offset = offset,
                           GH = GH, canonical = canonical, user_defined = user_defined, 
                           Xty = Xty, Xty_weights = Xty_weights, log_dens = log_dens, 
                           mu_fun = mu_fun, var_fun = var_fun, mu.eta_fun = mu.eta_fun, 
-                          score_eta_fun = score_eta_fun, score_eta_zi_fun = score_eta_zi_fun, 
+                          score_eta_fun = score_eta_fun,
                           score_phis_fun = score_phis_fun, list_thetas = list_thetas, 
-                          diag_D = diag_D, penalized = penalized, pen_mu = pen_mu, 
-                          pen_invSigma = pen_invSigma, pen_df = pen_df, weights = weights)
+                          diag_D = diag_D, weights = weights)
             tht <- opt$par
             new_pars <- relist(tht, skeleton = list_thetas)
             betas <- new_pars$betas
             phis <- new_pars$phis
-            gammas <- new_pars$gammas
             D <- if (diag_D) diag(exp(new_pars$D), length(new_pars$D)) else chol_transf(new_pars$D)
             post_modes <- GH$post_modes
-            if (any(abs(betas[-1L]) > control$max_coef_value) || 
-                (!is.null(gammas) && any(abs(gammas) > control$max_coef_value))) {
+            if (any(abs(betas[-1L]) > control$max_coef_value)) {
                 stop(err_mgs)
-            }
-            if (family$family %in% c("zero-inflated negative binomial", "negative binomial") &&
-                exp(phis) > control$max_phis_value) {
-                stop(large_shape_mgs)
             }
             if (opt$convergence == 0) {
                 converged <- TRUE
@@ -308,40 +251,33 @@ mixed_fit <- function (y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family,
     if (!is.null(phis)) {
         list_thetas <- c(list_thetas, list(phis = phis))
     }
-    if (!is.null(gammas)) {
-        list_thetas <- c(list_thetas, list(gammas = gammas))
-    }
     tht <- unlist(as.relistable(list_thetas))
-    GH <- GHfun(post_modes, y_lis, N_lis, X_lis, Z_lis, offset_lis, X_zi_lis, Z_zi_lis, 
-                offset_zi_lis, betas, solve(D), phis, gammas,
+    GH <- GHfun(post_modes, y_lis, N_lis, X_lis, Z_lis, offset_lis, betas, solve(D), phis,
                 nAGQ, nRE, canonical, user_defined, Zty_lis, log_dens, mu_fun, var_fun,
-                mu.eta_fun, score_eta_fun, score_phis_fun, score_eta_zi_fun)
-    logLik <- - logLik_mixed(tht, id, y, N, X, Z, offset, X_zi, Z_zi, offset_zi, GH, 
+                mu.eta_fun, score_eta_fun, score_phis_fun)
+    logLik <- - logLik_mixed(tht, id, y, N, X, Z, offset, GH, 
                              canonical, user_defined, Xty, Xty_weights, log_dens, mu_fun, 
-                             var_fun, mu.eta_fun, score_eta_fun, score_eta_zi_fun, 
-                             score_phis_fun, list_thetas, diag_D, penalized, pen_mu, 
-                             pen_invSigma, pen_df, weights)
-    logLik_contributions <- - logLik_mixed(tht, id, y, N, X, Z, offset, X_zi, Z_zi, offset_zi, GH, 
+                             var_fun, mu.eta_fun, score_eta_fun, 
+                             score_phis_fun, list_thetas, diag_D, weights)
+    logLik_contributions <- - logLik_mixed(tht, id, y, N, X, Z, offset, GH, 
                              canonical, user_defined, Xty, Xty_weights, log_dens, mu_fun, 
-                             var_fun, mu.eta_fun, score_eta_fun, score_eta_zi_fun, 
-                             score_phis_fun, list_thetas, diag_D, penalized, pen_mu, 
-                             pen_invSigma, pen_df, weights, TRUE)
+                             var_fun, mu.eta_fun, score_eta_fun, 
+                             score_phis_fun, list_thetas, diag_D, weights, TRUE)
     Hessian <- cd_vec(tht, score_mixed, id = id, y = y, N = N, X = X, Z = Z, 
-                      offset = offset, X_zi = X_zi, Z_zi = Z_zi, offset_zi = offset_zi, 
+                      offset = offset,
                       GH = GH, canonical = canonical, user_defined = user_defined, 
                       Xty = Xty, Xty_weights = Xty_weights, log_dens = log_dens, mu_fun = mu_fun, 
                       var_fun = var_fun, mu.eta_fun = mu.eta_fun, 
-                      score_eta_fun = score_eta_fun, score_eta_zi_fun = score_eta_zi_fun, 
+                      score_eta_fun = score_eta_fun, 
                       score_phis_fun = score_phis_fun, list_thetas = list_thetas, 
-                      diag_D = diag_D, penalized = penalized, pen_mu = pen_mu, 
-                      pen_invSigma = pen_invSigma, pen_df = pen_df, weights = weights)
-    score_vect_contributions <- score_mixed(tht, id, y, N, X, Z, offset, X_zi, Z_zi, offset_zi, GH, 
+                      diag_D = diag_D, weights = weights)
+    score_vect_contributions <- score_mixed(tht, id, y, N, X, Z, offset, GH, 
                                             canonical, user_defined, Xty, Xty_weights, log_dens, mu_fun, var_fun, 
-                                            mu.eta_fun, score_eta_fun, score_eta_zi_fun, score_phis_fun, 
-                                            list_thetas, diag_D, penalized, pen_mu, pen_invSigma, pen_df,
+                                            mu.eta_fun, score_eta_fun, score_phis_fun, 
+                                            list_thetas, diag_D,
                                             i_contributions = TRUE, weights = weights)
     #names(GH$post_vars) <- rownames(GH$post_modes)
-    list(coefficients = betas, phis = if (has_phis) phis, D = D, gammas = gammas,
+    list(coefficients = betas, phis = if (has_phis) phis, D = D,
          post_modes = GH$post_modes, post_vars = GH$post_vars,
          logLik = logLik, logLik_contributions = logLik_contributions,
          Hessian = Hessian,  score_vect_contributions = score_vect_contributions,

@@ -1,3 +1,4 @@
+#' @exportS3Method
 print.MixMod <- function (x, digits = max(4, getOption("digits") - 4), ...) {
     cat("\nCall:\n", printCall(x$call), "\n\n", sep = "")
     cat("\nModel:")
@@ -31,10 +32,6 @@ print.MixMod <- function (x, digits = max(4, getOption("digits") - 4), ...) {
     print(dat)
     cat("\nFixed effects:\n")
     print(x$coefficients)
-    if (!is.null(x$gammas)) {
-        cat("\nZero-part coefficients:\n")
-        print(x$gammas)
-    }
     if (!is.null(x$phis)) {
         if (x$family$family %in% c("negative binomial", "zero-inflated negative binomial")) {
             cat("\ndispersion parameter:\n", exp(x$phis), "\n")
@@ -49,8 +46,8 @@ print.MixMod <- function (x, digits = max(4, getOption("digits") - 4), ...) {
     invisible(x)
 }
 
-vcov.MixMod <- function (object, parm = c("all", "fixed-effects", "var-cov","extra", 
-                                          "zero_part"), sandwich = FALSE, ...) {
+#' @exportS3Method
+vcov.MixMod <- function (object, parm = c("all", "fixed-effects", "var-cov","extra"), sandwich = FALSE, ...) {
     parm <- match.arg(parm)
     V <- solve(object$Hessian)
     if (sandwich) {
@@ -90,17 +87,9 @@ vcov.MixMod <- function (object, parm = c("all", "fixed-effects", "var-cov","ext
             return(V[ind_phis, ind_phis, drop = FALSE])
         }
     }
-    if (parm == "zero_part") {
-        if (is.null(object$gammas)) {
-            stop("the fitted model does not have an extra zero part.")
-        } else {
-            gammas <- object$gammas
-            ind_gammas <- grep("zi_", colnames(V), fixed = TRUE)
-            return(V[ind_gammas, ind_gammas, drop = FALSE])
-        }
-    }
 }
 
+#' @exportS3Method
 logLik.MixMod <- function (object, ...) {
     out <- object$logLik
     attr(out, "df") <- nrow(object$Hessian)
@@ -109,45 +98,24 @@ logLik.MixMod <- function (object, ...) {
     out
 }
 
-coef.MixMod <- function (object, sub_model = c("main", "zero_part"), ...) {
+#' @exportS3Method
+coef.MixMod <- function (object, sub_model = c("main"), ...) {
     sub_model <- match.arg(sub_model)
     b <- ranef(object)
-    RE_zi <- grep("zi_", colnames(b), fixed = TRUE)
     if (sub_model == "main") {
         betas <- fixef(object, sub_model = "main")
-        if (length(RE_zi)) 
-            b <- b[, -RE_zi, drop = FALSE]
         out <- matrix(betas, nrow = nrow(b), ncol = length(betas), byrow = TRUE)
         colnames(out) <- names(betas)
         rownames(out) <- rownames(b)
         out[, colnames(b)] <- out[, colnames(b)] + b
         out
-    } else {
-        gammas <- fixef(object, sub_model = "zero_part")
-        if (length(RE_zi)) {
-            b <- b[, RE_zi, drop = FALSE]
-            colnames(b) <- gsub("zi_", "", colnames(b), fixed = TRUE)
-            out <- matrix(gammas, nrow = nrow(b), ncol = length(gammas), byrow = TRUE)
-            colnames(out) <- names(gammas)
-            rownames(out) <- rownames(b)
-            out[, colnames(b)] <- out[, colnames(b)] + b
-            out
-        } else {
-            gammas
-        }
-        
     }
 }
 
-fixef.MixMod <- function(object, sub_model = c("main", "zero_part"), ...) {
+fixef.MixMod <- function(object, sub_model = c("main"), ...) {
     sub_model <- match.arg(sub_model)
     if (sub_model == "main") {
         object$coefficients
-    } else {
-        if (!is.null(object$gammas)) 
-            object$gammas
-        else
-            stop("the fitted model does not have an extra zero-part.")
     }
 }
 
@@ -168,15 +136,7 @@ summary.MixMod <- function (object, sandwich = FALSE, ...) {
     n_D <- length(D[lower.tri(D, TRUE)])
     coef_table <- cbind("Estimate" = betas, "Std.Err" = ses, "z-value" = betas / ses,
                         "p-value" = 2 * pnorm(abs(betas / ses), lower.tail = FALSE))
-    if (!is.null(object$gammas)) {
-        gammas <- object$gammas
-        ind_gammas <- grep("zi_", colnames(V), fixed = TRUE)
-        ses <- sqrt(diag(V[ind_gammas, ind_gammas, drop = FALSE]))
-        coef_table_zi <- cbind("Estimate" = gammas, "Std.Err" = ses, "z-value" = gammas / ses,
-                               "p-value" = 2 * pnorm(abs(gammas / ses), lower.tail = FALSE))
-    }
-    out <- list(coef_table = coef_table, 
-                coef_table_zi = if (!is.null(object$gammas)) coef_table_zi,D = D, 
+    out <- list(coef_table = coef_table,D = D, 
                 logLik = logLik(object),
                 AIC = AIC(object), BIC = BIC(object), call = object$call,
                 N = length(object$id[[1]]))
@@ -236,13 +196,6 @@ print.summary.MixMod <- function (x, digits = max(4, getOption("digits") - 4), .
     coef_table[1:3] <- lapply(coef_table[1:3], round, digits = digits)
     coef_table[["p-value"]] <- format.pval(coef_table[["p-value"]], eps = 1e-04)
     print(coef_table)
-    if (!is.null(x[["coef_table_zi"]])) {
-        cat("\nZero-part coefficients:\n")
-        coef_table <- as.data.frame(x[["coef_table_zi"]])
-        coef_table[1:3] <- lapply(coef_table[1:3], round, digits = digits)
-        coef_table[["p-value"]] <- format.pval(coef_table[["p-value"]], eps = 1e-04)
-        print(coef_table)
-    }
     if (!is.null(x$phis_table)) {
         if (NB <- x$family$family %in% c("negative binomial", "zero-inflated negative binomial",
                                          "hurdle negative binomial")) {
@@ -274,8 +227,7 @@ coef.summary.MixMod <- function (object, ...) {
     object$coef_table
 }
 
-confint.MixMod <- function (object, parm = c("fixed-effects", "var-cov","extra", 
-                                             "zero_part"), 
+confint.MixMod <- function (object, parm = c("fixed-effects", "var-cov","extra"), 
                             level = 0.95, sandwich = FALSE, ...) {
     parm <- match.arg(parm)
     V <- vcov(object, sandwich = sandwich)
@@ -329,16 +281,6 @@ confint.MixMod <- function (object, parm = c("fixed-effects", "var-cov","extra",
             if (object$family$family %in% c("negative binomial", 
                                             "zero-inflated negative binomial"))
                 out <- exp(out)
-        }
-    } else {
-        if (is.null(object$gammas)) {
-            stop("the fitted model does not have an extra zero part.")
-        } else {
-            gammas <- object$gammas
-            ind_gammas <- grep("zi_", colnames(V), fixed = TRUE)
-            ses_gammas <- sqrt(diag(V[ind_gammas, ind_gammas, drop = FALSE]))
-            out <- cbind(gammas + qnorm((1 - level) / 2) * ses_gammas, gammas,
-                         gammas + qnorm((1 + level) / 2) * ses_gammas)
         }
     }
     colnames(out) <- c(paste(round(100 * c((1 - level) / 2, 
@@ -469,26 +411,6 @@ fitted.MixMod <- function (object, type = c("mean_subject", "subject_specific", 
     if (!is.null(object$offset))
         eta <- eta + object$offset
     mu <- object$Funs$mu_fun(eta)
-    if (!is.null(object$gammas)) {
-        X_zi <- model.matrix(object$Terms$termsX_zi, object$model_frames$mfX_zi)
-        offset_zi <- model.offset(object$model_frames$mfX_zi)
-        gammas <- fixef(object, "zero_part")
-        eta_zi <- c(X_zi %*% gammas)
-        if (type == "subject_specific" && !is.null(object$Terms$termsZ_zi)) {
-            b <- ranef(object)
-            RE_zi <- grep("zi_", colnames(b), fixed = TRUE)
-            if (length(RE_zi))
-                b <- b[, RE_zi, drop = FALSE]
-            id <- match(object$id[[1]], unique(object$id[[1]]))
-            Z_zi <- mapply(constructor_Z, object$Terms$termsZ_zi, object$model_frames$mfZ_zi, 
-                           MoreArgs = list (id = id), SIMPLIFY = FALSE)
-            Z_zi <- do.call("cbind", Z_zi)
-            eta_zi <- eta_zi + rowSums(Z_zi * b[id, , drop = FALSE])
-        }
-        if (!is.null(offset_zi))
-            eta_zi <- eta_zi + offset_zi
-        mu <- plogis(eta_zi, lower.tail = FALSE) * mu
-    }
     names(mu) <- rownames(X)
     mu
 }
@@ -520,20 +442,7 @@ marginal_coefs.MixMod <- function (object, std_errors = FALSE, link_fun = NULL,
     Z <- do.call("cbind", Z)
     betas <- fixef(object)
     D <- object$D
-    if (!is.null(object$gammas)) {
-        offset_zi <- model.offset(object$model_frames$mfX_zi)
-        X_zi <- model.matrix(object$Terms$termsX_zi, object$model_frames$mfX_zi)
-        if (!is.null(object$Terms$termsZ_zi)) {
-            Z_zi <- mapply(constructor_Z, object$Terms$termsZ_zi, object$model_frames$mfZ_zi, 
-                           MoreArgs = list (id = id), SIMPLIFY = FALSE)
-            Z_zi <- do.call("cbind", Z_zi)
-        } else {
-            Z_zi <- NULL
-        }
-        gammas <- fixef(object, "zero_part")
-    } else {
-        X_zi <- Z_zi <- gammas <- NULL
-    }
+    X_zi <- Z_zi <- gammas <- NULL
     compute_marg_coefs <- function (object, X, betas, Z, X_zi, gammas, Z_zi, D, M, 
                                     link_fun, seed) {
         if (!exists(".Random.seed", envir = .GlobalEnv)) 
@@ -551,12 +460,6 @@ marginal_coefs.MixMod <- function (object, std_errors = FALSE, link_fun = NULL,
         if (!is.null(offset)) {
             Xbetas <- Xbetas + offset
         }
-        if (!is.null(gammas)) {
-            eta_zi <- c(X_zi %*% gammas)
-            if (!is.null(offset_zi)) {
-                eta_zi <- eta_zi + offset_zi
-            }
-        }
         id <- match(object$id[[1]], unique(object$id[[1]]))
         nRE <- ncol(D)
         N <- nrow(X)
@@ -571,14 +474,6 @@ marginal_coefs.MixMod <- function (object, std_errors = FALSE, link_fun = NULL,
             b <- V %*% matrix(rnorm(M * nRE), nRE, M)
             Zb <- Z[id_i, , drop = FALSE] %*% b[seq_len(ncol(Z)), , drop = FALSE]
             mu <- mu_fun(Xbetas[id_i] + Zb)
-            if (!is.null(gammas)) {
-                eta_zi_id_i <- eta_zi[id_i]
-                if (!is.null(object$Terms$termsZ_zi)) {
-                    eta_zi_id_i <- eta_zi_id_i + Z_zi[id_i, , drop = FALSE] %*% 
-                        b[-seq_len(ncol(Z)), , drop = FALSE]
-                }
-                mu <- plogis(eta_zi_id_i, lower.tail = FALSE) * mu
-            }
             marg_inv_mu[id_i] <- link_fun(rowMeans(mu))
         }
         res <- c(solve(crossprod(X), crossprod(X, marg_inv_mu)))

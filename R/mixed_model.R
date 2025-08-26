@@ -1,6 +1,5 @@
 mixed_model <- function (fixed, random, data, family, weights = NULL,
-                         na.action = na.exclude, zi_fixed = NULL, zi_random = NULL, 
-                         penalized = FALSE, n_phis = NULL, initial_values = NULL, 
+                         na.action = na.exclude, n_phis = NULL, initial_values = NULL, 
                          control = list(), ...) {
     call <- match.call()
     # set family
@@ -18,19 +17,6 @@ mixed_model <- function (fixed, random, data, family, weights = NULL,
         stop("Because the namespace of the MASS package seems also to be loaded\n",
              "  use 'family = GLMMadaptive::negative.binomial()'.")
     }
-    if (family$family %in% c("zero-inflated poisson", "zero-inflated negative binomial",
-                             "hurdle poisson", "hurdle negative binomial", "hurdle beta", 
-                             "zero-inflated binomial", "hurdle log-normal") && 
-        is.null(zi_fixed)) {
-        stop("you have defined a family with an extra zero-part;\nat least argument ",
-             "'zi_fixed' needs to be defined, and potentially also argument 'zi_random'.")
-    }
-    if (family$family %in% c("binomial", "poisson", "negative binomial", "beta", "Gamma") && 
-        !is.null(zi_fixed)) {
-        stop("\nyou have defined a family object *without* an extra zero-part but\n ",
-             "you have also specified the 'zi_fixed' argument; use instead a family\n ", 
-             "object with an extra zero-part.")
-    }
     if (family$family == "Gamma" && is.null(family$log_dens)) {
         if (family$link != "log") {
             warning("with the Gamma family currently only the log link ",
@@ -42,9 +28,7 @@ mixed_model <- function (fixed, random, data, family, weights = NULL,
     if (inherits(data, "tbl_df") || inherits(data, "tbl"))
         data <- as.data.frame(data) # in case 'data' is a tibble
     orig_data <- data
-    groups <- 
-        unique(c(all.vars(getID_Formula(random)), 
-                 if (!is.null(zi_random)) all.vars(getID_Formula(zi_random))))
+    groups <- unique(all.vars(getID_Formula(random)))
     data[groups] <- lapply(data[groups], 
                            function (x) if (!is.factor(x)) factor(x, levels = unique(x)) else x)
     data <- data[order(data[[groups[1L]]]), ]
@@ -62,38 +46,16 @@ mixed_model <- function (fixed, random, data, family, weights = NULL,
         data = data)
     termsZ <- lapply(mfZ, terms)
     # fixed effects ZI part
-    if (!is.null(zi_fixed)) {
-        mfX_zi <- model.frame(terms(zi_fixed, data = data), data = data, 
-                              na.action = na.pass)
-        termsX_zi <- terms(mfX_zi)
-    } else {
-        mfX_zi <- termsX_zi <- NULL
-    }
+    mfX_zi <- termsX_zi <- NULL
     # random effects ZI part
-    if (!is.null(zi_random)) {
-        form_zi_random <- constructor_form_random(zi_random, data)
-        mfZ_zi <- lapply(form_zi_random, function (form, data) 
-            model.frame(terms(form, data = data), data = data, na.action = na.pass),
-            data = data)
-        termsZ_zi <- lapply(mfZ_zi, terms)
-    } else {
-        mfZ_zi <- termsZ_zi <- NULL
-    }
+    mfZ_zi <- termsZ_zi <- NULL
     # delete missing data if na.action is na.fail or na.omit
     chr_na_action <- as.character(body(na.action))[2]
     if (chr_na_action == "na.exclude" || chr_na_action == "na.omit") {
         complete_cases <- cbind(complete.cases(mfX), sapply(mfZ, complete.cases))
-        if (!is.null(zi_fixed))
-            complete_cases <- cbind(complete_cases, complete.cases(mfX_zi))
-        if (!is.null(zi_random))
-            complete_cases <- cbind(complete_cases, sapply(mfZ_zi, complete.cases))
         keep <- apply(complete_cases, 1, all)
         mfX <- mfX[keep, , drop = FALSE]
         mfZ[] <- lapply(mfZ, function (mf) mf[keep, , drop = FALSE])
-        if (!is.null(zi_fixed))
-            mfX_zi <- mfX_zi[keep, , drop = FALSE]
-        if (!is.null(zi_random))
-            mfZ_zi[] <- lapply(mfZ_zi, function (mf) mf[keep, , drop = FALSE])
     }
     # id variable
     id_nam <- all.vars(getID_Formula(random))
@@ -125,26 +87,10 @@ mixed_model <- function (fixed, random, data, family, weights = NULL,
     Z <- mapply(constructor_Z, termsZ, mfZ, MoreArgs = list(id = id), SIMPLIFY = FALSE)
     Z <- do.call("cbind", Z)
     # fixed effects ZI part
-    if (!is.null(zi_fixed)) {
-        offset_zi <- model.offset(mfX_zi)
-        X_zi <- model.matrix(termsX_zi, mfX_zi)
-    } else {
-        offset_zi <- X_zi <- NULL
-    }
+    offset_zi <- X_zi <- NULL
     # random effects ZI part
-    if (!is.null(zi_random)) {
-        id_nam_zi <- all.vars(getID_Formula(zi_random))
-        if (id_nam_zi[1L] != id_nam[1L]) {
-            stop("the 'random' and 'zi_random' formulas for the random effects ",
-                 "should have the same grouping variable.")
-        }
-        Z_zi <- mapply(constructor_Z, termsZ_zi, mfZ_zi, MoreArgs = list (id = id), 
-                       SIMPLIFY = FALSE)
-        Z_zi <- do.call("cbind", Z_zi)
-    } else {
-        Z_zi <- NULL
-    }
-    nRE <- ncol(Z) + if (!is.null(Z_zi)) ncol(Z_zi) else 0
+    Z_zi <- NULL
+    nRE <- ncol(Z)
     ###########################
     # control settings
     con <- list(iter_EM = 30, iter_qN_outer = 15, iter_qN = 10, iter_qN_incr = 10,
@@ -181,31 +127,8 @@ mixed_model <- function (fixed, random, data, family, weights = NULL,
     } else {
         list(betas = rep(0, ncol(X)), D = if (diag_D) rep(1, nRE) else diag(nRE))
     }
-    if (!is.null(zi_fixed)) {
-        inits <- c(inits, 
-                   list(gammas = glm.fit(X_zi, 
-                                         as.numeric(if (NCOL(y) == 2) y[, 1] == 0 else y == 0), 
-                                         family = binomial(),
-                                         offset = offset_zi)$coefficients))
-        if (family$family %in% c("zero-inflated poisson", "zero-inflated negative binomial",
-                                 "hurdle poisson", "hurdle negative binomial", 
-                                 "Conway Maxwell Poisson"))
-            inits$betas <- glm.fit(X, y, family = poisson())$coefficients
-    }
     ##########################
     # penalized
-    penalized <- if (is.logical(penalized) && !penalized) {
-        list(penalized = penalized)
-    } else if (is.logical(penalized) && penalized) {
-        list(penalized = penalized, pen_mu = 0, pen_sigma = 1, pen_df = 3)
-    } else if (is.list(penalized)) {
-        if (!all(names(penalized) %in% c("pen_mu", "pen_sigma", "pen_df")))
-            stop("when argument 'penalized' is a list it needs to have the components ",
-                 "'pen_mu', 'pen_sigma' and 'pen_df'.\n")
-        c(list(penalized = TRUE), penalized)
-    } else {
-        stop("argument 'penalized' must be a logical or a list.\n")
-    }
     ##########################
     # Functions
     Funs <- list(
@@ -237,14 +160,11 @@ mixed_model <- function (fixed, random, data, family, weights = NULL,
     if (!is.null(family$score_eta_fun) && is.function(family$score_eta_fun)) {
         Funs$score_eta_fun <- family$score_eta_fun
     }
-    if (!is.null(family$score_eta_zi_fun) && is.function(family$score_eta_zi_fun)) {
-        Funs$score_eta_zi_fun <- family$score_eta_zi_fun
-    }
     if (!is.null(family$score_phis_fun) && is.function(family$score_phis_fun)) {
         Funs$score_phis_fun <- family$score_phis_fun
     }
     has_phis <- inherits(try(Funs$log_dens(y, rep(0, length(y)), Funs$mu_fun, 
-                                           phis = NULL, rep(0, length(y))), TRUE),
+                                           phis = NULL), TRUE),
                          "try-error")
     if (has_phis) {
         if (family$family %in% c("negative binomial", "zero-inflated negative binomial",
@@ -270,8 +190,8 @@ mixed_model <- function (fixed, random, data, family, weights = NULL,
     }
     ###############
     # Fit the model
-    out <- mixed_fit(y, X, Z, X_zi, Z_zi, id, offset, offset_zi, family, inits, Funs, 
-                     con, penalized, weights)
+    out <- mixed_fit(y, X, Z, id, offset, family, inits, Funs, 
+                     con, weights)
     # check whether Hessian is positive definite at convergence
     H <- out$Hessian
     if (any(is.na(H) | !is.finite(H))) {
@@ -284,7 +204,7 @@ mixed_model <- function (fixed, random, data, family, weights = NULL,
     }
     # fix names
     names(out$coefficients) <- colnames(X)
-    RE_nams <- c(colnames(Z), if (!is.null(Z_zi)) paste0("zi_", colnames(Z_zi)))
+    RE_nams <- colnames(Z)
     dimnames(out$D) <- list(RE_nams, RE_nams)
     if (!is.null(out$phis))
         names(out$phis) <- paste0("phi_", seq_along(out$phis))
@@ -311,14 +231,12 @@ mixed_model <- function (fixed, random, data, family, weights = NULL,
         dimnames(v) <- list(RE_nams, RE_nams)
         v
     })
-    out$Terms <- list(termsX = termsX, termsZ = termsZ, termsX_zi = termsX_zi, 
-                      termsZ_zi = termsZ_zi)
-    out$model_frames <- list(mfX = mfX, mfZ = mfZ, mfX_zi = mfX_zi, mfZ_zi = mfZ_zi)
+    out$Terms <- list(termsX = termsX, termsZ = termsZ)
+    out$model_frames <- list(mfX = mfX, mfZ = mfZ)
     out$control <- con
     out$Funs <- Funs
     out$family <- family
     out$weights <- weights
-    out$penalized <- penalized
     out$na.action <- na.action
     out$contrasts <- attr(X, "contrasts")
     out$call <- call

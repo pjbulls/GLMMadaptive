@@ -1,53 +1,32 @@
-find_modes <- function (b, y_lis, N_lis, X_lis, Z_lis, offset_lis, X_zi_lis, Z_zi_lis, 
-                        offset_zi_lis, betas, invD, phis, gammas, 
+find_modes <- function (b, y_lis, N_lis, X_lis, Z_lis, offset_lis, betas, invD, phis, 
                         canonical, user_defined, Zty_lis, log_dens, mu_fun, var_fun, 
-                        mu.eta_fun, score_eta_fun, score_phis_fun, score_eta_zi_fun) {
-    log_post_b <- function (b_i, y_i, N_i, X_i, Z_i, offset_i, X_zi_i, Z_zi_i, offset_zi_i, 
-                            betas, invD, phis, gammas, canonical,
+                        mu.eta_fun, score_eta_fun, score_phis_fun) {
+    log_post_b <- function (b_i, y_i, N_i, X_i, Z_i, offset_i, 
+                            betas, invD, phis, canonical,
                             user_defined, Zty_i, log_dens, mu_fun, var_fun, mu.eta_fun,
-                            score_eta_fun, score_phis_fun, score_eta_zi_fun) {
+                            score_eta_fun, score_phis_fun) {
         ind_Z <- seq_len(ncol(Z_i))
         eta_y <- as.vector(X_i %*% betas + Z_i %*% b_i[ind_Z])
         if (!is.null(offset_i))
             eta_y <- eta_y + offset_i
-        eta_zi <- if (!is.null(X_zi_i)) as.vector(X_zi_i %*% gammas)
-        if (!is.null(Z_zi_i))
-            eta_zi <- eta_zi + as.vector(Z_zi_i %*% b_i[-ind_Z])
-        if (!is.null(offset_zi_i))
-            eta_zi <- eta_zi + offset_zi_i
-        - sum(log_dens(y_i, eta_y, mu_fun, phis, eta_zi), na.rm = TRUE) +
+        - sum(log_dens(y_i, eta_y, mu_fun, phis), na.rm = TRUE) +
                 c(0.5 * crossprod(b_i, invD) %*% b_i)
     }
-    score_log_post_b <- function (b_i, y_i, N_i, X_i, Z_i, offset_i,X_zi_i, Z_zi_i, offset_zi_i,
-                                  betas, invD, phis, gammas,
+    score_log_post_b <- function (b_i, y_i, N_i, X_i, Z_i, offset_i,
+                                  betas, invD, phis,
                                   canonical, user_defined, Zty_i, log_dens, mu_fun,
-                                  var_fun, mu.eta_fun, score_eta_fun, score_phis_fun,
-                                  score_eta_zi_fun) {
+                                  var_fun, mu.eta_fun, score_eta_fun, score_phis_fun) {
         eta_y <- as.vector(X_i %*% betas + Z_i %*% b_i[seq_len(ncol(Z_i))])
         if (!is.null(offset_i))
             eta_y <- eta_y + offset_i
-        eta_zi <- if (!is.null(X_zi_i)) as.vector(X_zi_i %*% gammas)
-        if (!is.null(Z_zi_i))
-            eta_zi <- eta_zi + as.vector(Z_zi_i %*% b_i[-seq_len(ncol(Z_i))])
-        if (!is.null(offset_zi_i))
-            eta_zi <- eta_zi + offset_zi_i
         mu_y <- mu_fun(eta_y)
         log_dens_part <- if (user_defined) {
             out <- if (!is.null(score_eta_fun)) {
-                - crossprod(Z_i, score_eta_fun(y_i, mu_y, phis, eta_zi))
+                - crossprod(Z_i, score_eta_fun(y_i, mu_y, phis))
             } else {
-                l1 <- log_dens(y_i, eta_y + 1e-04, mu_fun, phis, eta_zi)
-                l2 <- log_dens(y_i, eta_y - 1e-04, mu_fun, phis, eta_zi)
+                l1 <- log_dens(y_i, eta_y + 1e-04, mu_fun, phis)
+                l2 <- log_dens(y_i, eta_y - 1e-04, mu_fun, phis)
                 - crossprod(Z_i, (l1 - l2) / (2 * 1e-04))
-            }
-            if (!is.null(Z_zi_i)) {
-                out <- if (!is.null(score_eta_zi_fun)) {
-                    c(out, - crossprod(Z_zi_i, score_eta_zi_fun(y_i, mu_y, phis, eta_zi)))
-                } else {
-                    l1 <- log_dens(y_i, eta_y, mu_fun, phis, eta_zi + 1e-04)
-                    l2 <- log_dens(y_i, eta_y, mu_fun, phis, eta_zi - 1e-04)
-                    c(out, - crossprod(Z_zi_i, (l1 - l2) / (2 * 1e-04)))
-                }
             }
             out
         } else {
@@ -73,44 +52,37 @@ find_modes <- function (b, y_lis, N_lis, X_lis, Z_lis, offset_lis, X_zi_lis, Z_z
         Z_i <- Z_lis[[i]]
         offset_i <- if (!is.null(offset_lis)) offset_lis[[i]]
         Zty_i <- Zty_lis[[i]]
-        X_zi_i <- if (!is.null(X_zi_lis)) X_zi_lis[[i]]
-        Z_zi_i <- if (!is.null(Z_zi_lis)) Z_zi_lis[[i]]
-        offset_zi_i <- if (!is.null(offset_zi_lis)) offset_zi_lis[[i]]
         b_i <- b[i, ]
         opt_i <- optim(par = b_i, fn = log_post_b, gr = score_log_post_b, method = "BFGS",
                        y_i = y_i, N_i = N_i, X_i = X_i, Z_i = Z_i, offset_i = offset_i,
-                       X_zi_i = X_zi_i, Z_zi_i = Z_zi_i, offset_zi_i = offset_zi_i,
-                       betas = betas, invD = invD, phis = phis, gammas = gammas, 
+                       betas = betas, invD = invD, phis = phis, 
                        canonical = canonical,
                        user_defined = user_defined, Zty_i = Zty_i, log_dens = log_dens,
                        mu_fun = mu_fun, var_fun = var_fun, mu.eta_fun = mu.eta_fun,
-                       score_eta_fun = score_eta_fun, score_phis_fun = score_phis_fun,
-                       score_eta_zi_fun = score_eta_zi_fun)
+                       score_eta_fun = score_eta_fun, score_phis_fun = score_phis_fun)
         post_modes[i, ] <- opt_i$par
         post_hessians[[i]] <- cd_vec(post_modes[i, ], score_log_post_b,
                                      y_i = y_i, N_i = N_i, X_i = X_i, Z_i = Z_i, 
-                                     offset_i = offset_i, X_zi_i = X_zi_i, Z_zi_i = Z_zi_i, 
-                                     offset_zi_i = offset_zi_i, betas = betas, invD = invD, 
-                                     phis = phis, gammas = gammas, canonical = canonical, 
+                                     offset_i = offset_i, betas = betas, invD = invD, 
+                                     phis = phis, canonical = canonical, 
                                      user_defined = user_defined,
                                      Zty_i = Zty_i, log_dens = log_dens, mu_fun = mu_fun,
                                      var_fun = var_fun, mu.eta_fun = mu.eta_fun,
                                      score_eta_fun = score_eta_fun,
-                                     score_phis_fun = score_phis_fun, 
-                                     score_eta_zi_fun = score_eta_zi_fun)
+                                     score_phis_fun = score_phis_fun)
     }
     list(post_modes = post_modes, post_hessians = post_hessians)
 }
 
-GHfun <- function (b, y_lis, N_lis, X_lis, Z_lis, offset_lis, X_zi_lis, Z_zi_lis, offset_zi_lis,
-                   betas, inv_D, phis, gammas, k, q,
+GHfun <- function (b, y_lis, N_lis, X_lis, Z_lis, offset_lis,
+                   betas, inv_D, phis, k, q,
                    canonical, user_defined, Zty_lis, log_dens, mu_fun, var_fun, mu.eta_fun,
-                   score_eta_fun, score_phis_fun, score_eta_zi_fun) {
+                   score_eta_fun, score_phis_fun) {
     GH <- gauher(k)
-    aGH <- find_modes(b, y_lis, N_lis, X_lis, Z_lis, offset_lis, X_zi_lis, Z_zi_lis, 
-                      offset_zi_lis, betas, inv_D, phis, gammas,
+    aGH <- find_modes(b, y_lis, N_lis, X_lis, Z_lis, offset_lis,
+                      betas, inv_D, phis,
                       canonical, user_defined, Zty_lis, log_dens, mu_fun, var_fun, 
-                      mu.eta_fun, score_eta_fun, score_phis_fun, score_eta_zi_fun)
+                      mu.eta_fun, score_eta_fun, score_phis_fun)
     modes <- aGH$post_modes
     chol_hessians <- lapply(aGH$post_hessian, chol)
     b <- as.matrix(expand.grid(lapply(seq_len(q), function (k, u) u$x, u = GH)))
@@ -128,11 +100,7 @@ GHfun <- function (b, y_lis, N_lis, X_lis, Z_lis, offset_lis, X_zi_lis, Z_zi_lis
     ind_Z <- seq_len(ncol(Z_lis[[1]]))
     Ztb <- do.call('rbind', mapply(function (z, b) z %*% t(b[, ind_Z, drop = FALSE]), 
                                    Z_lis, b_new, SIMPLIFY = FALSE))
-    Z_zitb <- if (!is.null(Z_zi_lis[[1]])) {
-        do.call('rbind', mapply(function (z, b) z %*% t(b[, -ind_Z, drop = FALSE]), 
-                                Z_zi_lis, b_new, SIMPLIFY = FALSE))  
-    } 
-    list(b = do.call('rbind', b_new), b2 = do.call('rbind', b2), Ztb = Ztb, Z_zitb = Z_zitb,
+    list(b = do.call('rbind', b_new), b2 = do.call('rbind', b2), Ztb = Ztb,
                wGH = wGH, log_dets = log_dets, post_modes = modes, 
          post_vars = lapply(aGH$post_hessian, solve))
 }

@@ -17,4 +17,4 @@ LazyLoad: yes
 License: GPL (>= 3)
 URL: https://drizopoulos.github.io/GLMMadaptive/, https://github.com/drizopoulos/GLMMadaptive
 VignetteBuilder: knitr
-RoxygenNote: 6.1.1
+RoxygenNote: 7.3.2
